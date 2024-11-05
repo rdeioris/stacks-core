@@ -602,7 +602,7 @@ pub const PRINCIPAL_BYTES_MAX: usize = STANDARD_PRINCIPAL_BYTES + CONTRACT_NAME_
 pub fn get_type_size(ty: &TypeSignature) -> i32 {
     match ty {
         TypeSignature::IntType | TypeSignature::UIntType => 16, // low: i64, high: i64
-        TypeSignature::BoolType => 4,                           // i32
+        TypeSignature::BoolType => 1,                           // i32
         TypeSignature::PrincipalType
         | TypeSignature::SequenceType(_)
         | TypeSignature::CallableType(_)
@@ -619,7 +619,7 @@ pub fn get_type_size(ty: &TypeSignature) -> i32 {
             // indicator: i32, ok_val: inner_types.0, err_val: inner_types.1
             4 + get_type_size(&inner_types.0) + get_type_size(&inner_types.1)
         }
-        TypeSignature::NoType => 4, // i32
+        TypeSignature::NoType => 1, // i32
         TypeSignature::ListUnionType(_) => {
             unreachable!("not a value type")
         }
@@ -673,8 +673,8 @@ pub fn get_type_in_memory_size(ty: &TypeSignature, include_repr: bool) -> i32 {
             }
             size
         }
-        TypeSignature::NoType => 4,   // i32
-        TypeSignature::BoolType => 4, // i32
+        TypeSignature::NoType => 1,   // i32
+        TypeSignature::BoolType => 1, // i32
         TypeSignature::TupleType(tuple_ty) => {
             let mut size = 0;
             for inner_type in tuple_ty.get_type_map().values() {
@@ -951,14 +951,14 @@ fn read_from_wasm(
         }
         TypeSignature::BoolType => {
             debug_assert!(
-                length == 4,
-                "expected bool length to be 4 bytes, found {length}"
+                length == 1,
+                "expected bool length to be 1 byte, found {length}"
             );
-            let mut buffer: [u8; 4] = [0; 4];
+            let mut buffer: [u8; 1] = [0; 1];
             memory
                 .read(store.as_context_mut(), offset as usize, &mut buffer)
                 .map_err(|e| Error::Wasm(WasmError::Runtime(e.into())))?;
-            let bool_val = u32::from_le_bytes(buffer);
+            let bool_val = buffer[0];
             Ok(Value::Bool(bool_val != 0))
         }
         TypeSignature::TupleType(type_sig) => {
@@ -1042,7 +1042,17 @@ fn read_from_wasm(
                 _ => Err(Error::Wasm(WasmError::InvalidIndicator(indicator))),
             }
         }
-        TypeSignature::NoType => Err(Error::Wasm(WasmError::InvalidNoTypeInValue)),
+        TypeSignature::NoType => {
+            debug_assert!(
+                length == 1,
+                "expected NoType length to be 1 byte, found {length}"
+            );
+            let mut buffer: [u8; 1] = [0; 1];
+            memory
+                .read(store.as_context_mut(), offset as usize, &mut buffer)
+                .map_err(|e| Error::Wasm(WasmError::Runtime(e.into())))?;
+            Ok(Value::none())
+        }
         TypeSignature::ListUnionType(_subtypes) => {
             Err(Error::Wasm(WasmError::InvalidListUnionTypeInValue))
         }
@@ -1333,19 +1343,18 @@ fn write_to_wasm(
         }
         TypeSignature::BoolType => {
             let bool_val = value_as_bool(value)?;
-            let val = if bool_val { 1u32 } else { 0u32 };
-            let val_bytes = val.to_le_bytes();
+            let val_bytes = if bool_val { [1u8; 1] } else { [0u8; 1] };
             memory
                 .write(&mut store, (offset) as usize, &val_bytes)
                 .map_err(|e| Error::Wasm(WasmError::UnableToWriteMemory(e.into())))?;
-            Ok((4, 0))
+            Ok((1, 0))
         }
         TypeSignature::NoType => {
-            let val_bytes = [0u8; 4];
+            let val_bytes = [0u8; 1];
             memory
                 .write(&mut store, (offset) as usize, &val_bytes)
                 .map_err(|e| Error::Wasm(WasmError::UnableToWriteMemory(e.into())))?;
-            Ok((4, 0))
+            Ok((1, 0))
         }
         TypeSignature::OptionalType(inner_ty) => {
             let mut written = 0;
